@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardList, FileCheck, Plus } from "lucide-react";
 import { CreateTripModal } from "@/components/admin/trips/create-trip-modal";
 import { TripsTable } from "@/components/admin/trips/trips-table";
@@ -9,6 +9,7 @@ import {
   COMPLETED_TRIP_STATUS,
 } from "@/lib/operations/constants";
 import type { OperationsData } from "@/types/operations";
+import { createClient as createBrowserClient } from "@/utils/supabase/client";
 
 type TripsView = "active" | "completed";
 
@@ -21,15 +22,63 @@ export function TripsPanel({ data }: TripsPanelProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const closeCreateModal = useCallback(() => setCreateOpen(false), []);
 
+  // Keep a local copy of trips so realtime updates can mutate the list
+  const [trips, setTrips] = useState(() => data.trips);
+
   const activeTrips = useMemo(
-    () => data.trips.filter((trip) => ACTIVE_TRIP_STATUSES.includes(trip.status)),
-    [data.trips]
+    () => trips.filter((trip) => ACTIVE_TRIP_STATUSES.includes(trip.status)),
+    [trips],
   );
 
   const completedTrips = useMemo(
-    () => data.trips.filter((trip) => trip.status === COMPLETED_TRIP_STATUS),
-    [data.trips]
+    () => trips.filter((trip) => trip.status === COMPLETED_TRIP_STATUS),
+    [trips],
   );
+
+  // Realtime subscription: listen for INSERT and UPDATE on public.trips
+  useEffect(() => {
+    const supabase = createBrowserClient();
+
+    const channel = supabase.channel("public:trips");
+
+    channel.on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "trips" },
+      (payload) => {
+        const incoming = payload.new as any;
+        setTrips((prev) => {
+          const exists = prev.some((t) => t.id === incoming.id);
+          if (exists) {
+            return prev.map((t) =>
+              t.id === incoming.id ? { ...t, ...incoming } : t,
+            );
+          }
+          return [incoming, ...prev];
+        });
+      },
+    );
+
+    channel.on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "trips" },
+      (payload) => {
+        const incoming = payload.new as any;
+        setTrips((prev) =>
+          prev.map((t) => (t.id === incoming.id ? { ...t, ...incoming } : t)),
+        );
+      },
+    );
+
+    channel.subscribe();
+
+    return () => {
+      try {
+        channel.unsubscribe();
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -41,8 +90,9 @@ export function TripsPanel({ data }: TripsPanelProps) {
           Delivery tracking
         </h2>
         <p className="mt-2 max-w-2xl text-sm text-zinc-500">
-          Create cold-chain trips from shipper origins to consignee destinations.
-          Assign carriers and bind their inventory stacks when ready to dispatch.
+          Create cold-chain trips from shipper origins to consignee
+          destinations. Assign carriers and bind their inventory stacks when
+          ready to dispatch.
         </p>
       </section>
 
