@@ -70,10 +70,10 @@ export function TripsTable({
               <td className="px-4 py-3">
                 <TripStatusBadge status={trip.status} />
               </td>
-              <td className="max-w-[200px] px-4 py-3 text-zinc-300">
+              <td className="max-w-50 px-4 py-3 text-zinc-300">
                 {trip.origin_label}
               </td>
-              <td className="max-w-[200px] px-4 py-3 text-zinc-300">
+              <td className="max-w-50 px-4 py-3 text-zinc-300">
                 {trip.destination_label}
               </td>
               <td className="px-4 py-3 font-mono text-zinc-300">

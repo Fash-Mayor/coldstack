@@ -29,6 +29,19 @@ export async function createClient() {
           }
         },
       },
+      global: {
+        fetch: (url, options) => {
+          // Safely clone or instantiate the incoming headers to preserve auth tokens
+          const headers = new Headers(options?.headers);
+          // Append our connection fix safely
+          headers.set("Connection", "close");
+
+          return fetch(url, {
+            ...options,
+            headers, // Pass the valid Headers class instance back
+          });
+        },
+      },
     }
   );
 }

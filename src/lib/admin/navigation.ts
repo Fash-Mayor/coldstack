@@ -5,6 +5,7 @@ import {
   Layers,
   Truck,
   Users,
+  MapPin,
 } from "lucide-react";
 
 export type AdminNavItem = {
@@ -17,6 +18,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/stacks-loggers", label: "Stacks & Loggers", icon: Layers },
   { href: "/admin/trips", label: "Trips", icon: Truck },
+  { href: "/admin/map", label: "Map View", icon: MapPin },
   { href: "/admin/carriers", label: "Carriers", icon: Users },
   { href: "/admin/metrics", label: "Metrics", icon: BarChart3 },
 ];
