@@ -51,6 +51,7 @@ export type CreateTripInput = {
   shipperId: string;
   consigneeId: string;
   targetTemp: number;
+  tolerance: number;
   typeOfGoods: string;
 };
 

@@ -26,8 +26,7 @@ export function AssignCarrierTripModal({
   return (
     <InventoryModal
       title="Assign carrier to trip"
-      description={`Bind a carrier and their assigned stack to trip ${trip.origin_label.split(" — ")[0] ?? "trip"}.`}
-      onClose={onClose}
+      description={`Bind a carrier and their assigned stack to trip ${trip.origin_label?.split(" — ")[0] ?? "trip"}.`}      onClose={onClose}
       submitLabel="Assign carrier"
       disableSubmit={!hasCarriers || !carrierId}
       onSubmit={async () => assignCarrierToTrip(trip.id, carrierId)}

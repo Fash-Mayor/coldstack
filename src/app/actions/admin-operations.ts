@@ -193,7 +193,7 @@ export async function getOperationsData(): Promise<OperationsData> {
 export async function createTrip(
   data: CreateTripInput
 ): Promise<OperationsActionState> {
-  const { shipperId, consigneeId, targetTemp, typeOfGoods } = data;
+  const { shipperId, consigneeId, targetTemp, tolerance, typeOfGoods } = data;
 
   if (!shipperId || !consigneeId) {
     return { error: "Origin and destination are required." };
@@ -205,6 +205,10 @@ export async function createTrip(
 
   if (Number.isNaN(targetTemp)) {
     return { error: "Target temperature must be a valid number." };
+  }
+
+  if (Number.isNaN(tolerance)) {
+    return { error: "Tolerance must be a valid number." };
   }
 
   await requireAdmin();
@@ -242,6 +246,7 @@ export async function createTrip(
     consignee_id: consignee.id,
     status: "pending",
     target_temp: targetTemp,
+    tolerance,
     type_of_goods: typeOfGoods.trim(),
     origin_name_snapshot: shipper.name,
     dest_name_snapshot: consignee.name,
