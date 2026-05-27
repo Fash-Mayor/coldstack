@@ -29,6 +29,7 @@ export function CreateTripModal({
   const [shipperId, setShipperId] = useState("");
   const [consigneeId, setConsigneeId] = useState("");
   const [targetTemp, setTargetTemp] = useState("");
+  const [tolerance, setTolerance] = useState("");
   const [typeOfGoods, setTypeOfGoods] = useState("");
 
   const canSubmit =
@@ -36,7 +37,9 @@ export function CreateTripModal({
     consigneeId &&
     typeOfGoods.trim() &&
     targetTemp !== "" &&
-    !Number.isNaN(Number.parseFloat(targetTemp));
+    tolerance !== "" &&
+    !Number.isNaN(Number.parseFloat(targetTemp)) &&
+    !Number.isNaN(Number.parseFloat(tolerance));
 
   return (
     <InventoryModal
@@ -50,6 +53,7 @@ export function CreateTripModal({
           shipperId,
           consigneeId,
           targetTemp: Number.parseFloat(targetTemp),
+          tolerance: Number.parseFloat(tolerance),
           typeOfGoods: typeOfGoods.trim(),
         };
         return createTrip(payload);
@@ -85,7 +89,9 @@ export function CreateTripModal({
           </p>
         ) : (
           <label className="block text-sm">
-            <span className="font-medium text-zinc-300">Destination (Consignee)</span>
+            <span className="font-medium text-zinc-300">
+              Destination (Consignee)
+            </span>
             <select
               value={consigneeId}
               onChange={(event) => setConsigneeId(event.target.value)}
@@ -103,7 +109,9 @@ export function CreateTripModal({
         )}
 
         <label className="block text-sm">
-          <span className="font-medium text-zinc-300">Target temperature (°C)</span>
+          <span className="font-medium text-zinc-300">
+            Target temperature (°C)
+          </span>
           <input
             type="number"
             step="0.1"
@@ -111,6 +119,19 @@ export function CreateTripModal({
             onChange={(event) => setTargetTemp(event.target.value)}
             required
             placeholder="e.g. 2.5"
+            className={inputClassName}
+          />
+        </label>
+
+        <label className="block text-sm">
+          <span className="font-medium text-zinc-300">Tolerance (°C)</span>
+          <input
+            type="number"
+            step="0.1"
+            value={tolerance}
+            onChange={(event) => setTolerance(event.target.value)}
+            required
+            placeholder="e.g. 1.0"
             className={inputClassName}
           />
         </label>

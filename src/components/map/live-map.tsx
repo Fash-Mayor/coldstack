@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, Tooltip } from "react-leaflet";
+import { useEffect, useRef, useState, useMemo } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMap,
+  Polyline,
+  Tooltip,
+} from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import L from "leaflet";
+import L, { Map as LeafletMap } from "leaflet";
+import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 
 // Leaflet default icon asset fix for Next.js
@@ -15,36 +24,40 @@ const icon = L.icon({
 });
 
 // Structural controller to shift focus to updated pins
-function MapController({ coords, path }: { coords: [number, number] | null, path: [number, number][] }) {
+function MapController({
+  coords,
+  path,
+}: {
+  coords: [number, number] | null;
+  path: [number, number][];
+}) {
   const map = useMap();
   useEffect(() => {
     if (coords) map.setView(coords, map.getZoom(), { animate: true });
   }, [coords, map]);
-  
-  return path.length > 0 ? <Polyline positions={path} color="#3b82f6" weight={4} /> : null;
+
+  return path.length > 0 ? (
+    <Polyline positions={path} color="#3b82f6" weight={4} />
+  ) : null;
 }
 
 // 🛡️ Enhanced Multi-Format Coordinates Decoder
 function parseCoordinates(rawCoords: any): [number, number] | null {
   if (!rawCoords) return null;
-
   try {
     if (typeof rawCoords === "string" && /^[0-9a-fA-F]+$/.test(rawCoords)) {
       const bytes = new Uint8Array(rawCoords.length / 2);
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(rawCoords.substring(i * 2, i * 2 + 2), 16);
-      }
+      for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(rawCoords.substring(i * 2, i * 2 + 2), 16);
       const view = new DataView(bytes.buffer);
       const isLittleEndian = bytes[0] === 1;
       const geomType = view.getUint32(1, isLittleEndian);
       const hasSRID = (geomType & 0x20000000) !== 0;
-      let offset = 5; 
-      if (hasSRID) offset += 4; 
+      let offset = 5;
+      if (hasSRID) offset += 4;
       const lng = view.getFloat64(offset, isLittleEndian);
       const lat = view.getFloat64(offset + 8, isLittleEndian);
       if (!isNaN(lat) && !isNaN(lng)) return [lat, lng];
     }
-
     if (typeof rawCoords === "string") {
       const match = rawCoords.match(/POINT\(([-\d.]+) ([-\d.]+)\)/i);
       if (match) {
@@ -52,119 +65,142 @@ function parseCoordinates(rawCoords: any): [number, number] | null {
         const lat = parseFloat(match[2]);
         if (!isNaN(lat) && !isNaN(lng)) return [lat, lng];
       }
-    } 
-
+    }
     if (typeof rawCoords === "object" && rawCoords.type === "Point" && Array.isArray(rawCoords.coordinates)) {
       const lng = parseFloat(rawCoords.coordinates[0]);
       const lat = parseFloat(rawCoords.coordinates[1]);
       if (!isNaN(lat) && !isNaN(lng)) return [lat, lng];
     }
   } catch (err) {
-    console.error("Decoder failed parsing coordinates record:", err, rawCoords);
+    console.error("Decoder failed parsing coordinates:", err);
   }
-  
   return null;
 }
 
-export default function UnifiedMap({ tripId, status }: { tripId: string, status: string }) {
+export default function UnifiedMap({ tripId, status }: { tripId: string; status: string; }) {
   const [coords, setCoords] = useState<[number, number] | null>(null);
-  const [currentTemp, setCurrentTemp] = useState<number | null>(null); // 🌡️ Track temperature state
+  const [currentTemp, setCurrentTemp] = useState<number | null>(null);
   const [path, setPath] = useState<[number, number][]>([]);
-  const supabase = createClient();
+  
+  // 🛡️ New UI State for absolute control
+  const [limits, setLimits] = useState<{ lower: number; upper: number } | null>(null);
+  const [isBreached, setIsBreached] = useState(false);
 
+  const mapRef = useRef<LeafletMap | null>(null);
+  const supabase = useMemo(() => createClient(), []);
+
+  // 1. Data Fetching & Websocket Setup
   useEffect(() => {
-    setPath([]); 
-    setCoords(null);
-    setCurrentTemp(null);
-    
-    // Fetch initial trace points history
-    const loadData = async () => {
-      const { data, error } = await supabase
+    let isMounted = true;
+    let telemetryChannel: any;
+
+    const setupRealtime = async () => {
+      // A. Fetch Trip Boundaries
+      const { data: tripData } = await supabase
+        .from("trips")
+        .select("target_temp, tolerance")
+        .eq("id", tripId)
+        .single();
+
+      if (tripData && isMounted) {
+        setLimits({
+          lower: tripData.target_temp - tripData.tolerance,
+          upper: tripData.target_temp + tripData.tolerance,
+        });
+      }
+
+      // B. Fetch Telemetry History
+      const { data: historyData } = await supabase
         .from("telemetry")
-        .select("coords, temperature, logged_at") // 🌡️ Make sure to fetch temperature!
+        .select("coords, temperature, logged_at")
         .eq("trip_id", tripId)
         .order("logged_at", { ascending: true });
 
-      if (error) console.error("Telemetry history database error:", error);
+      if (!isMounted) return;
 
-      if (data && data.length > 0) {
-        const points = data
-          .map((d: any) => parseCoordinates(d.coords))
-          .filter(Boolean) as [number, number][];
-
+      if (historyData && historyData.length > 0) {
+        const points = historyData.map((d: any) => parseCoordinates(d.coords)).filter(Boolean) as [number, number][];
         setPath(points);
         if (points.length > 0) {
           setCoords(points[points.length - 1]);
-          // Set the temperature from the last recorded point
-          const lastValidTemp = data[data.length - 1]?.temperature;
-          setCurrentTemp(lastValidTemp !== undefined ? parseFloat(lastValidTemp) : null);
+          const lastValidTemp = historyData[historyData.length - 1]?.temperature;
+          if (lastValidTemp != null) setCurrentTemp(parseFloat(lastValidTemp));
         }
+      }
+
+      // C. Authenticate & Connect Live Stream
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isMounted || !session) return;
+
+      supabase.realtime.setAuth(session.access_token);
+
+      if (status === "on_trip") {
+        telemetryChannel = supabase
+          .channel(`trip-${tripId}-telemetry`)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "telemetry", filter: `trip_id=eq.${tripId}` },
+            (payload) => {
+              const newPoint = parseCoordinates(payload.new.coords);
+              const temp = payload.new.temperature != null ? parseFloat(payload.new.temperature) : null;
+
+              if (newPoint) {
+                setCoords(newPoint);
+                setPath((prev) => [...prev, newPoint]);
+              }
+              if (temp != null) setCurrentTemp(temp);
+            }
+          )
+          .subscribe();
       }
     };
 
-    loadData();
+    setupRealtime();
 
-    // Stream live adjustments 
-    if (status === "on_trip") {
-      const channel = supabase
-        .channel(`trip-${tripId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "telemetry", filter: `trip_id=eq.${tripId}` }, 
-          (payload) => {
-            const newPoint = parseCoordinates(payload.new.coords);
-            if (newPoint) {
-              setCoords(newPoint);
-              setPath((prev) => [...prev, newPoint]);
-              
-              // 🌡️ Update temperature dynamically on live ping
-              if (payload.new.temperature !== undefined) {
-                setCurrentTemp(parseFloat(payload.new.temperature));
-              }
-            }
-          })
-        .subscribe();
-        
-      return () => { supabase.removeChannel(channel); };
-    }
+    return () => {
+      isMounted = false;
+      if (telemetryChannel) supabase.removeChannel(telemetryChannel);
+      toast.dismiss("trip-breach-alert"); // Clean up toast if map closes
+    };
   }, [tripId, status, supabase]);
+
+  // 2. 🧠 The UI Engine: Reacts automatically to the live temperature
+  useEffect(() => {
+    if (currentTemp === null || !limits) return;
+
+    // Mathematically determine if current ping is dangerous
+    const breached = currentTemp > limits.upper || currentTemp < limits.lower;
+    setIsBreached(breached);
+
+    if (breached) {
+      // Because we use the exact same ID, Sonner dynamically updates 
+      // the existing toast with the new temp instead of freezing or duplicating!
+      toast.error(`CRITICAL BREACH: ${currentTemp.toFixed(1)}°C`, {
+        id: "trip-breach-alert",
+        description: `Outside safe cargo zone (${limits.lower}°C to ${limits.upper}°C)`,
+        duration: Infinity,
+      });
+    } else {
+      // Immediately clear the toast if temperature is safe
+      toast.dismiss("trip-breach-alert");
+    }
+  }, [currentTemp, limits]);
 
   if (!coords) {
     return (
-      <div className="h-125 w-full flex items-center justify-center bg-slate-50 border border-slate-200 rounded-xl text-slate-400 font-medium">
+      <div className="h-150 w-full flex items-center justify-center bg-slate-50 border border-slate-200 rounded-xl text-slate-400 font-medium">
         Connecting to telemetry positioning system...
       </div>
     );
   }
 
-  // Determine temperature alert styling context (e.g., alert colors if it gets too hot)
-  const isTooWarm = currentTemp !== null && currentTemp > 8; // Adjust threshold as needed for your goods
-
   return (
-    <div className="relative w-full z-0 rounded-xl overflow-hidden shadow-sm border border-slate-200" style={{ height: '600px' }}>
-      <MapContainer 
-        center={coords} 
-        zoom={14} 
-        scrollWheelZoom={true} 
-        style={{ height: '100%', width: '100%' }}
-      >
-        <TileLayer 
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" 
-        />
+    <div className="relative w-full z-0 rounded-xl overflow-hidden shadow-sm border border-slate-200" style={{ height: "600px" }}>
+      <MapContainer ref={mapRef} center={coords} zoom={14} scrollWheelZoom={true} style={{ height: "100%", width: "100%" }}>
+        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         
         <Marker position={coords} icon={icon}>
-          {/* 🌡️ Permanent floating message box above the marker */}
-          <Tooltip 
-            permanent 
-            direction="top" 
-            offset={[0, -40]} 
-            className="bg-transparent! border-none! shadow-none!"
-          >
-            <div className={`px-2 py-1 rounded-md shadow-md border text-xs font-bold flex items-center gap-1 text-white animate-bounce
-              ${isTooWarm 
-                ? 'bg-red-600 border-red-700 ring-2 ring-red-300' 
-                : 'bg-emerald-600 border-emerald-700'
-              }`}
-            >
+          <Tooltip permanent direction="top" offset={[0, -40]} className="bg-transparent! border-none! shadow-none!">
+            {/* 🌡️ The tag color is now perfectly synced to the isBreached boolean */}
+            <div className={`px-2 py-1 rounded-md shadow-md border text-xs font-bold flex items-center gap-1 text-white animate-bounce ${isBreached ? "bg-red-600 border-red-700 ring-2 ring-red-300" : "bg-emerald-600 border-emerald-700"}`}>
               <span className="text-[10px]">🌡️</span>
               {currentTemp !== null ? `${currentTemp.toFixed(1)}°C` : "N/A"}
             </div>
@@ -177,7 +213,7 @@ export default function UnifiedMap({ tripId, status }: { tripId: string, status:
             </div>
           </Popup>
         </Marker>
-        
+
         <MapController coords={coords} path={path} />
       </MapContainer>
     </div>
